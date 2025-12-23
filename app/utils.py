@@ -44,7 +44,7 @@ def parse_gallery_title(full_title: str) -> dict:
     """
     info = {
         'event': None,
-        'circle': None,
+        'group': None,   # [修改] circle -> group
         'artist': None,
         'title': None,
         'parody': None,
@@ -83,12 +83,12 @@ def parse_gallery_title(full_title: str) -> dict:
         logger.debug(f"[parse_gallery_title] 括号内容(社团/作者): '{content}'")
         ca_match = re.search(r'^(.*?)\s*\(([^)]+)\)$', content)
         if ca_match:
-            info['circle'] = ca_match.group(1).strip()
+            info['group'] = ca_match.group(1).strip()   # [修改] 赋值给 group
             info['artist'] = ca_match.group(2).strip()
-            logger.debug(f"[parse_gallery_title] 提取到社团: '{info['circle']}', 作者: '{info['artist']}'")
+            logger.debug(f"[parse_gallery_title] 提取到社团: '{info['group']}', 作者: '{info['artist']}'")
         else:
-            info['circle'] = content
-            logger.debug(f"[parse_gallery_title] 仅社团，无作者: '{info['circle']}'")
+            info['group'] = content   # [修改] 赋值给 group
+            logger.debug(f"[parse_gallery_title] 仅社团，无作者: '{info['group']}'")
 
         remaining = remaining[circle_match.end():].strip()
         logger.debug(f"[parse_gallery_title] 去除社团/作者后 remaining: '{remaining}'")
