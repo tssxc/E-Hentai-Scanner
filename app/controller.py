@@ -1,0 +1,112 @@
+# app/controller.py
+"""
+应用控制器层：定义具体的任务逻辑
+"""
+import logging
+from pathlib import Path
+from typing import Union, Optional
+from . import config
+from .services import ScanService
+from .logger import setup_logging
+from .common import verify_environment
+
+# 配置日志
+setup_logging(config.LOG_PATH_APP)
+logger = logging.getLogger(__name__)
+
+
+class AppController:
+    """
+    应用控制器：统一管理所有任务
+    """
+    def __init__(self):
+        """初始化控制器和服务"""
+        self.service = ScanService()
+
+    def scan_new_files(self):
+        """[任务] 扫描新文件"""
+        logger.info("🚀 [任务] 扫描新文件")
+        target_dir = config.DEFAULT_DIR
+        
+        # 环境检查
+        if not verify_environment(self.service.searcher, str(target_dir)):
+            logger.error("❌ 环境验证失败")
+            return
+        
+        # 获取待处理文件
+        files = self.service.get_pending_files(target_dir)
+        if not files:
+            logger.info("✅ 没有发现新文件")
+            return
+
+        # 执行批量扫描
+        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
+        logger.info("🏁 [任务完成] 扫描新文件")
+
+    def retry_failures(self):
+        """[任务] 重试失败项"""
+        logger.info("🚀 [任务] 重试失败项")
+        
+        # 获取需要重试的文件
+        retry_files = self.service.get_retry_files()
+        if not retry_files:
+            logger.info("✅ 没有需要重试的文件")
+            return
+        
+        logger.info(f"📂 发现 {len(retry_files)} 个需要重试的文件")
+        
+        # 转换为 Path 对象并过滤存在的文件
+        files = [Path(f) for f in retry_files if Path(f).exists()]
+        
+        if not files:
+            logger.warning("⚠️ 所有重试文件都不存在")
+            return
+        
+        # 执行批量扫描
+        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
+        logger.info("🏁 [任务完成] 重试失败项")
+
+    def scan_dedup(self):
+        """[任务] 去重扫描（处理重复 URL）"""
+        logger.info("🚀 [任务] 去重扫描")
+        
+        # 获取重复文件
+        dup_files = self.service.get_duplicate_files()
+        if not dup_files:
+            logger.info("✅ 没有发现重复文件")
+            return
+        
+        logger.info(f"📂 发现 {len(dup_files)} 个重复 URL 的文件")
+        
+        # 转换为 Path 对象并过滤存在的文件
+        files = [Path(f) for f in dup_files if Path(f).exists()]
+        
+        if not files:
+            logger.warning("⚠️ 所有重复文件都不存在")
+            return
+        
+        # 执行批量扫描
+        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
+        logger.info("🏁 [任务完成] 去重扫描")
+
+    def scan_single(self, file_path: Union[str, Path], scan_mode: Optional[str] = None):
+        """[任务] 扫描单文件"""
+        file_path = Path(file_path)
+        if not file_path.exists():
+            logger.error(f"❌ 文件不存在: {file_path}")
+            return
+        
+        logger.info(f"🚀 [任务] 扫描单文件: {file_path.name}")
+        result = self.service.scan_single(file_path, scan_mode=scan_mode)
+        
+        if result['success']:
+            logger.info(f"✅ 扫描成功: {result.get('message')}")
+        else:
+            logger.warning(f"⚠️ 扫描失败: {result.get('message')}")
+        
+        return result
+
+    def cleanup(self):
+        """清理资源"""
+        self.service.close()
+
