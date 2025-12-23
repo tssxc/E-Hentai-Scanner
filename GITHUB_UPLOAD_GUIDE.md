@@ -1,6 +1,6 @@
-# GitHub 上传指南
+# GitHub 上传和绑定指南
 
-本指南将帮助你安全地将项目上传到 GitHub。
+本指南将帮助你安全地将项目上传到 GitHub 并完成绑定。
 
 ## 📋 上传前检查清单
 
@@ -12,6 +12,21 @@
 - [x] ✅ `README.md` 已更新（项目说明）
 
 ## 🚀 上传步骤
+
+### 第零步：配置 Git 用户信息（首次使用需要）
+
+如果还没有配置 Git 用户信息，需要先配置：
+
+```bash
+git config user.name "你的名字"
+git config user.email "你的邮箱"
+```
+
+或者只针对当前仓库（不添加 `--global`）：
+```bash
+git config user.name "你的名字"
+git config user.email "你的邮箱"
+```
 
 ### 第一步：检查 Git 状态
 
