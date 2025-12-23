@@ -136,9 +136,8 @@ SLEEP_MAX = 6.0  # 最大休眠时间（秒）
 
 ## 🔒 安全说明
 
-⚠️ **重要**: 请勿将包含真实 Cookie 的文件提交到公共仓库！
+⚠️ **重要**: `secrets.py` 包含您的个人 Cookie 信息，**请勿分享给他人或上传到公开网络**。
 
-- `secrets.py` 已在 `.gitignore` 中
 - 使用 `secrets.py.example` 作为模板
 - 详细说明请参考 [README_SECURITY.md](README_SECURITY.md)
 

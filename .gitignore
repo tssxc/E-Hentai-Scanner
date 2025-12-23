@@ -1,4 +1,4 @@
-# Python 编译文件
+# Python 编译与缓存文件
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,13 +20,13 @@ wheels/
 .installed.cfg
 *.egg
 
-# 虚拟环境
+# 虚拟环境目录
 venv/
 env/
 ENV/
 .venv
 
-# 敏感配置文件
+# 🔒 敏感配置文件 (切勿提交)
 secrets.py
 *.env
 .env.local
@@ -37,38 +37,37 @@ secrets.py
 *.sqlite
 *.sqlite3
 
-# 数据目录（包含数据库、导出文件等）
-# 忽略所有内容，但保留目录结构
+# 📂 数据目录 (忽略内容，保留结构)
 data/*
 !data/.gitkeep
 
-# 日志文件
-# 忽略所有内容，但保留目录结构
+# 📝 日志文件 (忽略内容，保留结构)
 logs/*
 !logs/.gitkeep
 *.log
 
-# 数据导出文件
+# 数据导出文件与临时文本
 *.txt
+#但在根目录下保留重要的文档:
 !requirements.txt
 !README*.md
 !MIGRATION_GUIDE.md
 !PROJECT_STRUCTURE.md
+!README_SECURITY.md
 
 # 备份文件
 *.bak
 
-# IDE 配置文件
+# IDE 与编辑器配置
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# 操作系统
+# 操作系统生成文件
 .DS_Store
 Thumbs.db
 
-# 测试文件（可选，如果不想提交测试脚本）
+# 测试文件 (如需提交测试脚本，请注释掉下方行)
 # test_*.py
-

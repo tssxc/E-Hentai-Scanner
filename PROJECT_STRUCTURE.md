@@ -1,27 +1,40 @@
 # 项目结构说明
 
-本项目采用代码与数据分离的目录结构，便于版本控制和数据管理。
+本项目采用代码与数据分离的目录结构，便于管理。
 
 ## 📁 目录结构
 
 ```
 E-Hentai-Scanner/
-├── modules/              # 核心功能模块
-│   ├── common.py        # 公共初始化函数
-│   ├── database.py      # 数据库管理
-│   ├── network.py       # 网络请求
-│   ├── scanner_core.py  # 扫描核心逻辑
-│   ├── task_manager.py  # 任务管理
+├── app/                  # 核心应用包
+│   ├── __init__.py       # 暴露核心接口
+│   ├── config.py         # 配置文件（需从 config.example.py 复制）
+│   ├── config.example.py # 配置示例
+│   ├── database.py       # 数据库模型
+│   ├── network.py        # 网络请求服务
+│   ├── services.py       # 业务逻辑层
+│   ├── controller.py     # 控制器层
+│   ├── scanner_core.py   # 扫描核心
 │   ├── result_handler.py # 结果处理
-│   ├── translator.py    # 标签翻译
-│   └── ...
+│   ├── task_manager.py   # 任务管理
+│   ├── translator.py     # 标签翻译
+│   ├── utils.py          # 工具函数
+│   ├── logger.py         # 日志配置
+│   ├── common.py         # 公共初始化
+│   └── exceptions.py     # 异常定义
 │
-├── scripts/              # 扫描脚本
-│   ├── scan_new.py      # 扫描新文件
-│   ├── scan_retry.py    # 重试失败文件
-│   ├── scan_dedup.py    # 去重扫描
-│   ├── scan_single.py   # 单文件扫描
-│   └── similarity_rescan.py # 相似度重扫
+├── data/                 # 数据目录
+│   ├── eh_scan_results.db      # 主数据库
+│   ├── eh_scan_results.db.bak  # 数据库备份
+│   ├── db.text.json            # 标签翻译数据库
+│   ├── export_scan_results.json # 导出的 JSON 数据
+│   ├── export_scan_results.csv  # 导出的 CSV 数据
+│   └── *.txt                   # 其他数据文件
+│
+├── logs/                 # 日志目录
+│   ├── search_result.log       # 主扫描日志
+│   ├── rescan.log              # 重扫日志
+│   └── *.log                   # 其他日志文件
 │
 ├── tools/                # 工具脚本和可执行文件
 │   ├── manual_confirm.py # 手动确认工具
@@ -30,33 +43,18 @@ E-Hentai-Scanner/
 │   ├── reset_changed_from_log.py # 日志重置工具
 │   └── UnRAR.exe        # RAR 解压工具
 │
-├── data/                 # 数据目录（不提交到版本控制）
-│   ├── eh_scan_results.db      # 主数据库
-│   ├── eh_scan_results.db.bak  # 数据库备份
-│   ├── db.text.json            # 标签翻译数据库
-│   ├── export_scan_results.json # 导出的 JSON 数据
-│   ├── export_scan_results.csv  # 导出的 CSV 数据
-│   └── *.txt                   # 其他数据文件
-│
-├── logs/                 # 日志目录（不提交到版本控制）
-│   ├── search_result.log       # 主扫描日志
-│   ├── rescan.log              # 重扫日志
-│   └── *.log                   # 其他日志文件
-│
-├── config.py            # 配置文件
-├── secrets.py           # 敏感配置（不提交）
-├── secrets.py.example   # 配置示例
-├── main.py              # 主程序入口
-├── requirements.txt     # Python 依赖
-└── README.md            # 项目说明
+├── manage.py             # 统一入口（CLI）
+├── requirements.txt      # Python 依赖
+├── secrets.py            # 敏感配置
+├── secrets.py.example    # 配置示例
+└── README.md             # 项目说明
 ```
 
 ## 📋 目录说明
 
 ### 代码目录
 
-- **`modules/`**: 核心功能模块，包含所有可复用的业务逻辑
-- **`scripts/`**: 各种扫描脚本，用于不同的扫描场景
+- **`app/`**: 核心应用包，包含所有业务逻辑和功能模块
 - **`tools/`**: 工具脚本和可执行文件，包括：
   - Python 工具脚本（手动确认、数据导出等）
   - 第三方可执行文件（如 UnRAR.exe）
@@ -76,32 +74,30 @@ E-Hentai-Scanner/
 
 ### 配置文件
 
-- **`config.py`**: 项目配置（提交到版本控制）
-- **`secrets.py`**: 敏感配置（不提交，包含 Cookie 等）
+- **`app/config.py`**: 项目配置（需从 `app/config.example.py` 复制）
+- **`secrets.py`**: 敏感配置（包含 Cookie 等）
 - **`secrets.py.example`**: 配置模板
 
-## 🔒 版本控制
+## 🔒 数据与配置管理
 
-以下目录和文件**不提交**到版本控制（已在 `.gitignore` 中配置）：
+以下目录和文件包含重要数据或敏感信息，请注意妥善保管：
 
-- `data/` - 所有数据文件
-- `logs/` - 所有日志文件
-- `secrets.py` - 敏感配置
-- `__pycache__/` - Python 缓存
-- `*.db`, `*.db.bak` - 数据库文件
-- `*.log` - 日志文件
+- `data/` - 包含所有数据库和扫描结果
+- `logs/` - 包含运行日志
+- `secrets.py` - 包含敏感 Cookie 信息，**请勿分享给他人**
 
 ## 🚀 使用说明
 
 ### 初始化项目
 
-1. 克隆项目后，复制 `secrets.py.example` 为 `secrets.py` 并填入配置
-2. 确保 `data/` 和 `logs/` 目录存在（程序会自动创建）
-3. 安装依赖：`pip install -r requirements.txt`
+1. 复制 `secrets.py.example` 为 `secrets.py` 并填入配置
+2. 复制 `app/config.example.py` 为 `app/config.py` 并修改路径
+3. 确保 `data/` 和 `logs/` 目录存在（程序会自动创建）
+4. 安装依赖：`pip install -r requirements.txt`
 
 ### 路径配置
 
-所有路径配置在 `config.py` 中：
+所有路径配置在 `app/config.py` 中：
 
 - `PROJECT_ROOT`: 项目根目录（自动检测）
 - `DATA_DIR`: 数据目录（`data/`）
@@ -117,7 +113,7 @@ E-Hentai-Scanner/
 ## 📝 注意事项
 
 1. **数据分离**: 代码和数据完全分离，便于备份和迁移
-2. **路径配置**: 修改路径时只需更新 `config.py`
+2. **路径配置**: 修改路径时只需更新 `app/config.py`
 3. **工具位置**: 所有工具文件统一放在 `tools/` 目录
 4. **日志管理**: 定期清理 `logs/` 目录中的旧日志文件
-
+5. **安全保护**: `secrets.py` 包含敏感信息，请妥善保管，不要分享给他人
