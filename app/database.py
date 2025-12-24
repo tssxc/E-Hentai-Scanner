@@ -98,6 +98,27 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"❌ 创建备份失败: {e}")
 
+    # [修复] 缩进调整：现在它是类的方法，而不是 create_backup 的内部函数
+    def rollback_to_backup(self) -> bool:
+        """从备份恢复数据库"""
+        self.close()
+
+        if not self.backup_path.exists():
+            logger.error("❌ 备份文件不存在，无法回溯！")
+            return False
+
+        try:
+            if self.db_path.exists():
+                os.remove(self.db_path)
+            shutil.copy2(self.backup_path, self.db_path)
+            logger.warning(f"🔙 [Rollback] 数据库已回溯！")
+            # 重新连接
+            self._connect()
+            return True
+        except Exception as e:
+            logger.error(f"❌ 回溯失败: {e}")
+            return False
+
     def save_record(self, file_path: Union[str, Path], status: str, 
                    url: Optional[str] = None, title: Optional[str] = None, 
                    tags: Optional[str] = None):

@@ -35,7 +35,14 @@ class ScanValidator:
         # parse_gallery_title 会去除 (C99) [Group] 等干扰信息
         parsed = parse_gallery_title(title_to_check)
         parsed_title = parsed.get('title', '')
-        sim_parsed = calculate_similarity(clean_name, parsed_title)
+        
+        sim_parsed = 0.0
+        # [修改] 增加长度限制：只有当解析后的标题足够长时才进行比对
+        # 避免解析出 "Original", "Vol.1" 等通用短词导致的高相似度误判
+        if parsed_title and len(parsed_title) >= 5:
+            sim_parsed = calculate_similarity(clean_name, parsed_title)
+            # 可以在 debug 日志中输出解析后的标题，方便调试
+            # logger.debug(f"   [Parsed Match] '{parsed_title}' sim: {sim_parsed:.2f}")
         
         # 取两者中较高的分数
         best_score = max(sim_direct, sim_parsed)

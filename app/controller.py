@@ -10,7 +10,7 @@ from .services import ScanService
 from .logger import setup_logging
 from .common import verify_environment
 
-# 配置日志
+# 配置默认日志
 setup_logging(config.LOG_PATH_APP)
 logger = logging.getLogger(__name__)
 
@@ -44,48 +44,67 @@ class AppController:
         logger.info("🏁 [任务完成] 扫描新文件")
 
     def retry_failures(self):
-        """[任务] 重试失败项"""
-        logger.info("🚀 [任务] 重试失败项")
+        """
+        [任务] 重试所有非成功项 (FAIL, NO_MATCH, MISMATCH等)
+        强制使用 'second' (第二页) 模式，并开启详细调试日志
+        """
+        print("\n🚀 [任务] 启动全量重试 (模式: second) | 🐛 DEBUG模式已开启")
         
-        # 获取需要重试的文件
+        # ================= 动态调整配置 =================
+        # 1. 开启 DEBUG 级别日志
+        logging.getLogger().setLevel(logging.DEBUG)
+        for handler in logging.getLogger().handlers:
+            handler.setLevel(logging.DEBUG)
+            
+        # 2. 屏蔽第三方库噪音
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("charset_normalizer").setLevel(logging.WARNING)
+        logging.getLogger("PIL").setLevel(logging.WARNING)
+        
+        # 3. 延长休眠时间 (可选，根据之前的修改)
+        config.SLEEP_MIN = 12.0
+        config.SLEEP_MAX = 18.0
+        logger.info(f"⏳ [安全模式] 休眠时间已调整: {config.SLEEP_MIN}-{config.SLEEP_MAX}s")
+        # ================================================
+
+        # 获取需要重试的文件 (现在会返回所有非 SUCCESS 的文件)
         retry_files = self.service.get_retry_files()
+        
         if not retry_files:
-            logger.info("✅ 没有需要重试的文件")
+            logger.info("✅ 没有非 SUCCESS 的记录，无需重扫。")
             return
         
-        logger.info(f"📂 发现 {len(retry_files)} 个需要重试的文件")
+        logger.info(f"📊 发现 {len(retry_files)} 个待重扫文件")
         
         # 转换为 Path 对象并过滤存在的文件
         files = [Path(f) for f in retry_files if Path(f).exists()]
         
         if not files:
-            logger.warning("⚠️ 所有重试文件都不存在")
+            logger.warning("❌ 所有待重扫文件在本地都不存在")
             return
         
-        # 执行批量扫描
-        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
-        logger.info("🏁 [任务完成] 重试失败项")
+        # [核心修改] 强制使用 scan_mode='second'
+        self.service.process_batch(files, scan_mode='second')
+        
+        logger.info("🏁 [任务完成] 全量重试结束")
 
     def scan_dedup(self):
         """[任务] 去重扫描（处理重复 URL）"""
         logger.info("🚀 [任务] 去重扫描")
         
-        # 获取重复文件
         dup_files = self.service.get_duplicate_files()
         if not dup_files:
             logger.info("✅ 没有发现重复文件")
             return
         
         logger.info(f"📂 发现 {len(dup_files)} 个重复 URL 的文件")
-        
-        # 转换为 Path 对象并过滤存在的文件
         files = [Path(f) for f in dup_files if Path(f).exists()]
         
         if not files:
             logger.warning("⚠️ 所有重复文件都不存在")
             return
         
-        # 执行批量扫描
         self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
         logger.info("🏁 [任务完成] 去重扫描")
 
@@ -109,4 +128,3 @@ class AppController:
     def cleanup(self):
         """清理资源"""
         self.service.close()
-

@@ -60,7 +60,8 @@ def manual_confirm_all():
                 print(f"🔗 当前标题: {title if title else '(无)'}")
                 print(f"🌐 当前 URL: {gallery_url if gallery_url else '(无)'}")
                 print("-" * 60)
-                print("👉 操作选项: [y]确认当前 [c]重扫封面 [o]打开网页 [n]跳过 [f]标记失败 [q]退出")
+                # [修改] 添加了 [s]重扫第二页 选项
+                print("👉 操作选项: [y]确认当前 [c]重扫封面 [s]重扫第二页 [o]打开网页 [n]跳过 [f]标记失败 [q]退出")
                 
                 choice = input("请输入指令: ").lower().strip()
                 
@@ -72,6 +73,7 @@ def manual_confirm_all():
                     print("✅ 已确认为: SUCCESS")
                     processed = True
 
+                # === 封面扫描逻辑 ===
                 elif choice in ['c', 'cover']:
                     if not file_exists:
                         print("❌ 文件不存在，无法扫描。")
@@ -83,28 +85,60 @@ def manual_confirm_all():
                         
                         if result['success'] and result.get('url'):
                             new_url = result.get('url')
-                            new_title = result.get('title', 'Unknown Title') # 使用 get 防止 KeyError
+                            new_title = result.get('title', 'Unknown Title')
                             new_tags = result.get('tags', '')
                             
                             print(f"✨ [重扫成功] 发现相关画廊:")
                             print(f"   标题: {new_title}")
                             print(f"   URL : {new_url}")
                             
-                            # 由人工决定是否采纳该结果
                             confirm = input("👉 是否采纳此结果并标记为 SUCCESS? (y/n): ").lower().strip()
                             if confirm == 'y':
                                 db.save_record(file_path, "SUCCESS", new_url, new_title, new_tags)
                                 print("✅ 数据库已更新为 SUCCESS")
                                 processed = True 
                             else:
-                                # 若不采纳，更新显示变量供后续操作（如按 'o' 打开此新 URL）
                                 gallery_url, title, tags = new_url, new_title, new_tags
                                 print("   结果已暂存，您可以继续操作或打开网页确认。")
                         else:
                             print(f"❌ [扫描无结果] {result.get('message')}")
                     except Exception as e:
                         print(f"❌ 扫描过程出错: {e}")
-                    
+
+                # === [新增] 第二页扫描逻辑 ===
+                elif choice in ['s', 'second']:
+                    if not file_exists:
+                        print("❌ 文件不存在，无法扫描。")
+                        continue
+                        
+                    print("🔄 正在执行第二页扫描...")
+                    try:
+                        # [关键修改] 调用 scan_single_file 并传入 scan_mode='second'
+                        result = scan_single_file(file_path, searcher, handler, scan_mode='second')
+                        
+                        if result['success'] and result.get('url'):
+                            new_url = result.get('url')
+                            new_title = result.get('title', 'Unknown Title')
+                            new_tags = result.get('tags', '')
+                            
+                            print(f"✨ [重扫成功] 发现相关画廊:")
+                            print(f"   标题: {new_title}")
+                            print(f"   URL : {new_url}")
+                            
+                            confirm = input("👉 是否采纳此结果并标记为 SUCCESS? (y/n): ").lower().strip()
+                            if confirm == 'y':
+                                db.save_record(file_path, "SUCCESS", new_url, new_title, new_tags)
+                                print("✅ 数据库已更新为 SUCCESS")
+                                processed = True 
+                            else:
+                                # 暂存结果供查看
+                                gallery_url, title, tags = new_url, new_title, new_tags
+                                print("   结果已暂存，您可以继续操作或打开网页确认。")
+                        else:
+                            print(f"❌ [扫描无结果] {result.get('message')}")
+                    except Exception as e:
+                        print(f"❌ 扫描过程出错: {e}")
+
                 elif choice in ['n', 'no']:
                     processed = True
                     

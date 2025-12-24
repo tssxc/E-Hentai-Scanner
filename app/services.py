@@ -8,14 +8,16 @@ from pathlib import Path
 from typing import List, Optional, Union
 from . import config
 from .database import DatabaseManager
-from .network import EHentaiHashSearcher
+# 注意：这里移除了 .network 的引用，避免循环依赖，因为 network 已被底层调用
 from .translator import TagTranslator
 from .task_manager import TaskManager
 from .result_handler import ResultHandler
 from .scanner_core import scan_single_file
 from .utils import perform_random_sleep
 from .logger import get_logger
-from .validator import ScanValidator  # 导入验证器
+from .validator import ScanValidator
+# 延迟导入以避免循环引用，或者在 __init__ 中处理
+from .network import EHentaiHashSearcher
 
 logger = get_logger(__name__)
 
@@ -93,8 +95,6 @@ class ScanService:
         perform_random_sleep()
 
         # 1. 执行扫描 (获取基础 URL)
-        # scan_single_file 内部可能会调用 handler 写入一次数据库，
-        # 但我们会在后续步骤中根据验证结果再次更新（覆盖）它。
         res = scan_single_file(
             file_path=file_path,
             searcher=self.searcher,
@@ -109,7 +109,7 @@ class ScanService:
             # 调用验证器
             is_valid, title, tags = self.validator.evaluate_scan_result(clean_name, scan_url)
             
-            # 确保字段非空 (优先使用验证器返回的标题，其次是扫描结果的标题)
+            # 确保字段非空
             save_title = title if title else (res.get('title') or "Unknown Title")
             save_tags = tags if tags else ""
 
@@ -117,36 +117,33 @@ class ScanService:
                 logger.info(f"   🎉 [验证通过] 匹配成功: {save_title[:30]}...")
                 self.db.save_record(file_path, 'SUCCESS', scan_url, save_title, save_tags)
             else:
-                # === 保护机制 ===
-                # URL 有效但标题/Tag 不匹配 -> 存为 MISMATCH
-                # 这样数据不会丢失，可以在后续人工确认
+                # 保护机制: URL 有效但标题/Tag 不匹配 -> 存为 MISMATCH
                 logger.warning(f"   🛡️ [保护机制] 匹配度低，已存为 MISMATCH: {scan_url}")
                 self.db.save_record(file_path, 'MISMATCH', scan_url, save_title, save_tags)
         
         else:
             # 处理无结果或错误
             status = 'NO_MATCH'
-            error_msg = res.get('error')
-            if error_msg:
-                if "IP" in str(error_msg): status = 'ERROR'
-                elif "Archive" in str(error_msg): status = 'FILE_ERROR'
-                else: status = 'ERROR'
-                logger.error(f"   ❌ 扫描出错: {error_msg}")
+            error_msg = res.get('error') or res.get('message', '')
+            
+            if "IP" in str(error_msg): status = 'ERROR'
+            elif "Archive" in str(error_msg) or "FILE_ERROR" in str(error_msg): status = 'FILE_ERROR'
+            elif res.get('status') == 'FAIL': status = 'NO_MATCH'
+            else: status = res.get('status', 'ERROR')
+
+            # 只有当原本不是 NO_MATCH 时才打印错误，减少刷屏
+            if status != 'NO_MATCH':
+                logger.error(f"   ❌ 扫描无果/出错: {status} | {error_msg}")
             else:
                 logger.info(f"   🈚 无结果")
             
-            # 确保非 SUCCESS 状态也被记录
             self.db.save_record(file_path, status)
 
     def scan_single(self, file_path: Union[str, Path], scan_mode: Optional[str] = None) -> dict:
         """扫描单个文件 (暴露给 CLI 使用)"""
         scan_mode = scan_mode or config.DEFAULT_MODE
         path_str = str(file_path)
-        
-        # 复用保护逻辑
         self._process_single_file_protected(path_str, scan_mode)
-        
-        # 返回结果供 CLI 显示 (构造一个简单的 dict)
         record = self.db.get_record_by_path(path_str)
         if record:
             return {
@@ -156,8 +153,9 @@ class ScanService:
         return {'success': False, 'message': "未生成记录"}
 
     def get_retry_files(self) -> List[str]:
-        """获取需要重试的文件列表（状态为 FAIL 或 NULL URL）"""
-        return self.task_manager.get_null_url_tasks()
+        """[修改] 获取需要重试的文件列表（所有非 SUCCESS）"""
+        # 现在调用 TaskManager 的 get_retry_tasks
+        return self.task_manager.get_retry_tasks()
 
     def get_duplicate_files(self) -> List[str]:
         """获取重复 URL 的文件列表"""

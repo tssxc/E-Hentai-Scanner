@@ -43,7 +43,6 @@ class TaskManager:
         """获取重复 URL 任务"""
         logger.info(f"🔍 [{self.db.table_name}] 正在检索重复 URL...")
         
-        # [修改] 使用 self.db.table_name
         sql = f"""
         SELECT file_path, gallery_url 
         FROM {self.db.table_name} 
@@ -63,18 +62,18 @@ class TaskManager:
         except Exception as e:
             logger.error(f"❌ 查询重复失败: {e}")
             return []
-    def get_null_url_tasks(self):
+
+    def get_retry_tasks(self):
         """
-        [新增] 获取数据库中 gallery_url 为 NULL 或空字符串的任务
-        通常是上次扫描失败、无结果(NO_MATCH)或格式不支持的文件
+        [修改] 获取所有需要重试的任务
+        条件：状态不为 'SUCCESS' 的所有记录 (包括 FAIL, NO_MATCH, MISMATCH, ERROR 等)
         """
-        logger.info("🔍 正在检索无有效 URL 的历史记录...")
+        logger.info("🔍 正在检索所有非 SUCCESS 状态的记录...")
         
-        # SQL: 查找 url 字段为空 或 NULL 的记录
         sql = f"""
         SELECT file_path 
         FROM {self.db.table_name} 
-        WHERE gallery_url IS NULL OR gallery_url = ''
+        WHERE status != 'SUCCESS'
         """
         try:
             self.db.cursor.execute(sql)
@@ -82,5 +81,5 @@ class TaskManager:
             paths = [row['file_path'] for row in rows]
             return paths
         except Exception as e:
-            logger.error(f"❌ 查询 NULL 记录失败: {e}")
+            logger.error(f"❌ 查询重试记录失败: {e}")
             return []

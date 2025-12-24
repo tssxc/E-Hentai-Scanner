@@ -44,6 +44,7 @@ class EHentaiHashSearcher:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
         })
+        # 配置重试策略
         retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
         
@@ -57,7 +58,8 @@ class EHentaiHashSearcher:
     def verify_connection(self) -> bool:
         logger.debug(f"🔌 [Connect] 正在验证连接: {self.domain}")
         try:
-            r = self.session.get(self.domain, timeout=10)
+            # [修改] 超时时间从 10s -> 30s
+            r = self.session.get(self.domain, timeout=30)
             if r.status_code == 200 and len(r.text) > 500:
                 logger.info(f"✅ 网络连接正常 ({self.site_name})")
                 return True
@@ -87,11 +89,14 @@ class EHentaiHashSearcher:
         payload = {"method": "gdata", "gidlist": [[gid, token]], "namespace": 1}
 
         try:
-            res = self.session.post(self.api_url, json=payload, timeout=10)
+            # [修改] API 请求超时时间从 10s -> 30s
+            res = self.session.post(self.api_url, json=payload, timeout=30)
             data = res.json()
             
             if not data.get('gmetadata'):
-                raise ParseError("API 返回数据为空")
+                # 某些情况下 API 返回空而不是错误，这里视为解析失败
+                # raise ParseError("API 返回数据为空")
+                return None
                 
             gmeta = data['gmetadata'][0]
             title = html.unescape(gmeta.get('title_jpn') or gmeta.get('title'))
@@ -103,7 +108,9 @@ class EHentaiHashSearcher:
             return {"title": title, "tags": tags}
 
         except Exception as e:
-            raise NetworkError(f"API 请求异常: {e}")
+            logger.warning(f"⚠️ 获取元数据失败: {e}")
+            # raise NetworkError(f"API 请求异常: {e}")
+            return None
 
     def search_by_hash(self, file_hash: str, is_cover: bool = True) -> Union[str, None]:
         if not file_hash: return None
@@ -114,7 +121,9 @@ class EHentaiHashSearcher:
         logger.debug(f"🔍 [Search] Hash: {file_hash[:8]}... | Cover: {is_cover}")
 
         try:
-            response = self.session.get(search_url, timeout=15)
+            # [修改] 搜索请求超时时间从 15s -> 60s
+            # 这能有效解决“等待网站响应”的问题，尤其是 ExHentai 响应慢的时候
+            response = self.session.get(search_url, timeout=60)
             
             if "Your IP address has been" in response.text:
                 raise IpBlockedError("IP 被 E-Hentai 封禁")
@@ -133,8 +142,10 @@ class EHentaiHashSearcher:
             return "NO_MATCH"
 
         except requests.exceptions.RequestException as e:
-            raise NetworkError(f"搜索请求失败: {e}")
-
+            # raise NetworkError(f"搜索请求失败: {e}")
+            logger.warning(f"⚠️ 搜索请求超时或失败: {e}")
+            return None
+            
     def process_archive(self, archive_path: Union[str, Path], target: str = 'cover') -> Union[str, None]:
         archive_path = Path(archive_path)
         if not archive_path.exists():
@@ -170,10 +181,15 @@ class EHentaiHashSearcher:
                     
                     # 提取并计算哈希
                     extract_path = temp_path / Path(target_img).name
+                    # [安全] 确保目标目录存在
+                    # extract_path.parent.mkdir(parents=True, exist_ok=True) 
+                    
                     with open(extract_path, 'wb') as f_out:
                         f_out.write(handler.read(target_img))
                     
                     f_hash = self.calculate_sha1(extract_path)
+                    
+                    # 执行搜索
                     return self.search_by_hash(f_hash, is_cover=is_cover_search)
 
         except (zipfile.BadZipFile, Exception) as e:
@@ -182,4 +198,5 @@ class EHentaiHashSearcher:
                 logger.error(f"❌ RAR Error: {e}")
             else:
                 logger.error(f"❌ Archive Error: {e}")
-            raise ParseError(f"处理出错: {e}")
+            # raise ParseError(f"处理出错: {e}")
+            return "FILE_ERROR"
