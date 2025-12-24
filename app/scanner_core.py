@@ -21,20 +21,24 @@ def scan_single_file(file_path: str, searcher, handler, scan_mode: Optional[str]
     scan_mode = scan_mode or config.DEFAULT_MODE
     path_obj = Path(file_path)
     
+    # 使用 logger.debug 记录每个文件的开始，避免 info 级别刷屏
+    logger.debug(f"🎬 [Start] 正在扫描: {path_obj.name} (Mode: {scan_mode})")
+    
     if not path_obj.exists():
+        logger.error(f"❌ 文件未找到: {file_path}")
         return {
             'success': False, 'status': 'ERROR', 'url': None, 
             'message': f'文件不存在: {file_path}', 'title': None, 'action': None
         }
     
-    logger.debug(f"🔍 [单文件扫描] {path_obj.name} (模式: {scan_mode})")
-    
     try:
         # 执行搜索
         url = searcher.process_archive(path_obj, target=scan_mode)
+        logger.debug(f"🔍 搜索返回 URL: {url}")
         
         # 处理结果
         status = handler.handle_search_result(str(path_obj), url, searcher)
+        logger.debug(f"📝 结果处理状态: {status}")
         
         if status == "STOP":
             return {
@@ -42,27 +46,24 @@ def scan_single_file(file_path: str, searcher, handler, scan_mode: Optional[str]
                 'message': '触发停止信号 (IP 被封)', 'title': None, 'action': 'STOP'
             }
         elif status == "SUCCESS":
-            # 获取记录详情
             record = handler.db.get_record_by_path(str(path_obj))
             title = record['title'] if record else 'Unknown'
+            # 成功时打印 Info
+            logger.info(f"🎉 成功匹配: {path_obj.name} -> {title[:30]}...")
             return {
                 'success': True, 'status': 'SUCCESS', 'url': url,
-                'message': f'成功找到: {title}', 'title': title, 'action': None
+                'message': f'成功: {title}', 'title': title, 'action': None
             }
         else:
             return {
                 'success': False, 'status': 'FAIL', 'url': url,
-                'message': '未找到匹配结果' if url == "NO_MATCH" else f'状态: {status}',
+                'message': '未找到匹配' if url == "NO_MATCH" else f'状态: {status}',
                 'title': None, 'action': None
             }
             
-    except KeyboardInterrupt:
-        logger.warning("🛑 用户强制中断")
-        return {
-            'success': False, 'status': 'INTERRUPTED', 'url': None,
-            'message': '用户中断', 'title': None, 'action': 'STOP'
-        }
     except Exception as e:
+        # 捕获未知异常并打印堆栈
+        logger.exception(f"💥 处理文件时发生未捕获异常: {path_obj.name}")
         action = handler.handle_exception(str(path_obj), e)
         return {
             'success': False, 'status': 'ERROR', 'url': None,

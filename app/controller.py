@@ -62,10 +62,6 @@ class AppController:
         logging.getLogger("charset_normalizer").setLevel(logging.WARNING)
         logging.getLogger("PIL").setLevel(logging.WARNING)
         
-        # 3. 延长休眠时间 (可选，根据之前的修改)
-        config.SLEEP_MIN = 12.0
-        config.SLEEP_MAX = 18.0
-        logger.info(f"⏳ [安全模式] 休眠时间已调整: {config.SLEEP_MIN}-{config.SLEEP_MAX}s")
         # ================================================
 
         # 获取需要重试的文件 (现在会返回所有非 SUCCESS 的文件)
