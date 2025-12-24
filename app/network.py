@@ -1,4 +1,4 @@
-# modules/network.py
+# app/network.py
 import os
 import re
 import html
@@ -14,10 +14,24 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from . import config
+
+# ================= 压缩库加载 =================
+# 1. RAR 支持
 try:
     import rarfile
+    if config.UNRAR_PATH.exists():
+        rarfile.UNRAR_TOOL = str(config.UNRAR_PATH)
 except ImportError:
     rarfile = None
+
+# 2. 7z 支持 (新增)
+try:
+    import py7zr
+except ImportError:
+    py7zr = None
+
+# 3. HTML 解析
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -36,7 +50,12 @@ class EHentaiHashSearcher:
         self.api_url = "https://api.e-hentai.org/api.php"
         self.site_name = "ExHentai" if "exhentai" in self.domain else "E-Hentai"
         
-        logger.debug(f"HashSearcher 初始化完成. 目标站点: {self.site_name}")
+        # 依赖检查日志
+        missing_libs = []
+        if not rarfile: missing_libs.append("rarfile")
+        if not py7zr: missing_libs.append("py7zr")
+        if missing_libs:
+            logger.debug(f"ℹ️ 可选解压库未安装: {', '.join(missing_libs)} (部分格式可能不支持)")
 
     def _setup_session(self, cookies):
         self.session.headers.update({
@@ -48,7 +67,6 @@ class EHentaiHashSearcher:
         if cookies:
             self.session.cookies.update(cookies)
         
-        # 强制开启设置
         self.session.cookies.set('nw', '1', domain='.e-hentai.org')
         self.session.cookies.set('nw', '1', domain='.exhentai.org')
 
@@ -56,7 +74,7 @@ class EHentaiHashSearcher:
         logger.debug(f"🔌 [Connect] 正在验证连接: {self.domain}")
         try:
             start_time = time.time()
-            r = self.session.get(self.domain, timeout=30)
+            r = self.session.get(self.domain, timeout=5) # 缩短超时
             elapsed = time.time() - start_time
             
             if r.status_code == 200 and len(r.text) > 500:
@@ -65,48 +83,34 @@ class EHentaiHashSearcher:
             logger.warning(f"⚠️ 连接响应异常 (Code: {r.status_code}, Length: {len(r.text)})")
             return False
         except Exception as e:
-            logger.error(f"❌ 网络连接验证失败: {e}", exc_info=True)
+            logger.error(f"❌ 网络连接验证失败: {e}")
             return False
 
     def calculate_sha1(self, file_path: Union[str, Path]) -> Optional[str]:
         """计算文件 SHA1"""
-        logger.debug(f"正在计算 Hash: {file_path}")
         sha1 = hashlib.sha1()
         try:
             with open(file_path, 'rb') as f:
                 while chunk := f.read(65536):
                     sha1.update(chunk)
-            digest = sha1.hexdigest()
-            logger.debug(f"Hash 计算完成: {digest}")
-            return digest
+            return sha1.hexdigest()
         except OSError as e:
             logger.error(f"❌ 计算哈希失败: {e}")
             return None
 
     def search_by_hash(self, file_hash: str, is_cover: bool = True) -> Union[str, None]:
         if not file_hash: 
-            logger.warning("跳过搜索: 空 Hash")
             return None
         
         params = f"f_shash={file_hash}&fs_similar=1" + ("&fs_covers=1" if is_cover else "")
         search_url = f"{self.domain}/?{params}"
         
-        logger.debug(f"🔍 [Search] URL: {search_url}")
+        logger.debug(f"🔍 [Search] Hash: {file_hash[:8]}...")
 
         try:
-            start_time = time.time()
             response = self.session.get(search_url, timeout=60)
-            elapsed = time.time() - start_time
-            logger.debug(f"搜索响应: Status={response.status_code}, 耗时={elapsed:.2f}s")
             
-            # ================= [新增] 响应内容预览 =================
-            # 打印前 1000 个字符，足够看到 HTML 头部、Title 和关键的错误信息
-            # 使用 !r 避免换行符破坏日志格式
-            #logger.debug(f"📜 [响应预览] {response.text!r}")
-            # =======================================================
-
             if "Your IP address has been" in response.text:
-                logger.critical("🛑 检测到 IP 封禁页面")
                 raise IpBlockedError("IP 被 E-Hentai 封禁")
 
             # 解析结果
@@ -115,7 +119,6 @@ class EHentaiHashSearcher:
                 logger.info(f"✅ 找到匹配: {result_url}")
                 return result_url
             else:
-                logger.debug("未找到匹配结果 (NO_MATCH)")
                 return "NO_MATCH"
 
         except requests.exceptions.RequestException as e:
@@ -123,7 +126,6 @@ class EHentaiHashSearcher:
             return None
 
     def _parse_search_result(self, html_content: str) -> Optional[str]:
-        """从搜索结果 HTML 中提取画廊 URL"""
         if "/g/" in html_content:
             if BeautifulSoup:
                 soup = BeautifulSoup(html_content, 'html.parser')
@@ -138,48 +140,79 @@ class EHentaiHashSearcher:
 
     def _extract_image_from_archive(self, archive_path: Path, target_mode: str, temp_dir: Path) -> Tuple[Optional[Path], str]:
         """
-        从压缩包中提取目标图片
-        Returns: (extracted_file_path, error_code)
+        [核心] 从压缩包中提取图片
+        支持 Zip, Rar, 7z
         """
         try:
+            handler = None
+            is_7z = False
+
+            # 1. 尝试 Zip
             if zipfile.is_zipfile(archive_path):
                 handler = zipfile.ZipFile(archive_path, 'r')
+            
+            # 2. 尝试 RAR
             elif rarfile and rarfile.is_rarfile(archive_path):
                 handler = rarfile.RarFile(archive_path, 'r')
+            
+            # 3. 尝试 7z (需要 py7zr)
+            elif py7zr and py7zr.is_7zfile(archive_path):
+                handler = py7zr.SevenZipFile(archive_path, mode='r')
+                is_7z = True
+            
             else:
-                logger.warning(f"不支持的压缩格式: {archive_path.suffix}")
+                logger.warning(f"❌ 不支持的格式或文件损坏: {archive_path.name}")
                 return None, "UNSUPPORTED"
             
             with handler:
-                file_list = handler.namelist()
+                # 获取文件列表
+                if is_7z:
+                    file_list = handler.getnames()
+                else:
+                    file_list = handler.namelist()
+                
+                # 筛选图片
                 imgs = sorted([f for f in file_list if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
                 
                 if not imgs: 
-                    logger.warning(f"压缩包内无图片: {archive_path.name}")
+                    logger.warning(f"⚠️ 压缩包内无图片: {archive_path.name}")
                     return None, "NO_IMAGES"
 
-                # 策略选择
+                # 选择目标图片
                 if target_mode == 'cover':
                     target_img = imgs[0]
-                    logger.debug(f"提取封面 (第1张): {target_img}")
                 else: 
                     target_index = 9 if len(imgs) >= 10 else -1
                     target_img = imgs[target_index]
-                    logger.debug(f"提取内页 (Index {target_index}): {target_img}")
                 
                 extract_path = temp_dir / Path(target_img).name
-                # 安全性：防止路径遍历
-                if '..' in str(extract_path):
-                     return None, "FILE_ERROR"
-
-                with open(extract_path, 'wb') as f_out:
-                    f_out.write(handler.read(target_img))
                 
-                return extract_path, "OK"
+                # 提取文件
+                if is_7z:
+                    # py7zr 提取逻辑稍有不同
+                    handler.extract(path=temp_dir, targets=[target_img])
+                    # py7zr 会按目录结构提取，我们需要找到文件并移动出来，或者直接返回完整路径
+                    full_extracted_path = temp_dir / target_img
+                    if full_extracted_path.exists():
+                        return full_extracted_path, "OK"
+                    else:
+                        return None, "FILE_ERROR"
+                else:
+                    # Zip / Rar 提取
+                    with open(extract_path, 'wb') as f_out:
+                        f_out.write(handler.read(target_img))
+                    return extract_path, "OK"
 
+        except NotImplementedError:
+            # 专门捕获 Zip 压缩算法不支持的情况 (如 Deflate64)
+            logger.error(f"❌ 压缩算法不支持 (可能是 Deflate64): {archive_path.name}")
+            return None, "FILE_ERROR"
+            
         except (zipfile.BadZipFile, Exception) as e:
             if rarfile and isinstance(e, rarfile.Error):
                 logger.error(f"❌ RAR Error ({archive_path.name}): {e}")
+            elif py7zr and isinstance(e, py7zr.exceptions.Bad7zFile):
+                 logger.error(f"❌ 7z Error ({archive_path.name}): {e}")
             else:
                 logger.error(f"❌ Archive Error ({archive_path.name}): {e}")
             return None, "FILE_ERROR"
@@ -190,12 +223,10 @@ class EHentaiHashSearcher:
             logger.error(f"文件不存在: {archive_path}")
             return None
 
-        logger.debug(f"📂 处理压缩包: {archive_path.name} (模式: {target})")
-
         with tempfile.TemporaryDirectory() as temp_dir:
             extracted_path, status = self._extract_image_from_archive(archive_path, target, Path(temp_dir))
             
-            if extracted_path:
+            if extracted_path and extracted_path.exists():
                 f_hash = self.calculate_sha1(extracted_path)
                 return self.search_by_hash(f_hash, is_cover=(target == 'cover'))
             else:
@@ -203,8 +234,7 @@ class EHentaiHashSearcher:
 
     def get_gallery_metadata(self, gallery_url: str) -> Optional[Dict]:
         match = re.search(r'/g/(\d+)/([\w]+)', gallery_url)
-        if not match:
-            return None
+        if not match: return None
         
         gid, token = int(match.group(1)), match.group(2)
         payload = {"method": "gdata", "gidlist": [[gid, token]], "namespace": 1}
@@ -212,19 +242,22 @@ class EHentaiHashSearcher:
         try:
             res = self.session.post(self.api_url, json=payload, timeout=30)
             data = res.json()
-            
-            if not data.get('gmetadata'):
-                return None
-                
+            if not data.get('gmetadata'): return None
             gmeta = data['gmetadata'][0]
-            title = html.unescape(gmeta.get('title_jpn') or gmeta.get('title'))
-            tags = gmeta.get('tags', [])
             
+            title_jpn = html.unescape(gmeta.get('title_jpn') or "")
+            title_en = html.unescape(gmeta.get('title') or "")
+            
+            tags = gmeta.get('tags', [])
             if category := gmeta.get('category'):
                 tags.append(f"reclass:{category.lower()}")
             
-            return {"title": title, "tags": tags}
-
+            return {
+                "title_jpn": title_jpn,
+                "title_en": title_en,
+                "title": title_jpn if title_jpn else title_en,
+                "tags": tags
+            }
         except Exception as e:
             logger.warning(f"⚠️ 获取元数据失败: {e}")
             return None

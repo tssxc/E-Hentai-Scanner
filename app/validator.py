@@ -42,7 +42,7 @@ class ScanValidator:
         if parsed_title and len(parsed_title) >= 5:
             sim_parsed = calculate_similarity(clean_name, parsed_title)
             # 可以在 debug 日志中输出解析后的标题，方便调试
-            # logger.debug(f"   [Parsed Match] '{parsed_title}' sim: {sim_parsed:.2f}")
+            logger.debug(f"   [Parsed Match] '{parsed_title}' sim: {sim_parsed:.2f}")
         
         # 取两者中较高的分数
         best_score = max(sim_direct, sim_parsed)

@@ -49,7 +49,7 @@ class TaskManager:
 
     def get_retry_tasks(self):
         """获取所有需要重试的任务"""
-        sql = f"SELECT file_path FROM {self.db.table_name} WHERE status != 'SUCCESS'"
+        sql = f"SELECT file_path FROM {self.db.table_name} WHERE status NOT IN ('SUCCESS', 'NO_MATCH')"
         logger.debug(f"执行 SQL: {sql}")
         
         try:

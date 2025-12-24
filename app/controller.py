@@ -9,11 +9,7 @@ logger = logging.getLogger(__name__)
 
 class AppController:
     def __init__(self):
-        """
-        初始化控制器
-        """
-        # 1. 初始化所有组件
-        # 解包顺序: db, searcher, translator, task_manager, result_handler, validator
+        # 1. 初始化所有组件 (接收6个返回值)
         (
             self.db, 
             self.searcher, 
@@ -23,7 +19,7 @@ class AppController:
             self.validator
         ) = initialize_components()
 
-        # 2. 初始化业务服务
+        # 2. 注入到服务层
         self.service = ScanService(
             self.db, 
             self.searcher, 
@@ -33,65 +29,32 @@ class AppController:
         )
 
     def scan_new_files(self):
-        """
-        [命令] 扫描新文件
-        """
-        # 1. 执行环境自检 (无参数)
         verify_environment()
-        
-        # 2. 获取目标目录并检查
         target_dir = config.DEFAULT_DIR
+        
         if not target_dir.exists():
             logger.error(f"❌ 目标目录不存在: {target_dir}")
-            logger.error("请在 app/config.py 中配置正确的 DIR_PROD 或 DIR_DEBUG")
             return
 
-        # 3. 检查网络连接 (可选，因为 initialize_components 已经警告过)
-        if not self.searcher.verify_connection():
-            logger.warning("⚠️ 网络连接不稳，可能会导致大量失败")
-
         logger.info(f"📂 扫描目录: {target_dir}")
-        logger.info(f"🛠️ 扫描模式: {config.DEFAULT_MODE}")
-
-        # 4. 调用服务层执行任务
         self.service.scan_new_files(str(target_dir))
 
     def retry_failures(self):
-        """
-        [命令] 重试失败任务
-        """
         logger.info("🔄 准备重试失败任务...")
-        
-        # 强制开启 Debug 模式以获得更多信息
-        import logging
-        logging.getLogger().setLevel(logging.DEBUG)
-        
-        # 调用服务层的重试逻辑
-        # 注意：重试通常强制使用 'second' 模式以提高准确率
         self.service.retry_failures(scan_mode='second')
 
     def scan_dedup(self):
-        """
-        [命令] 扫描重复 URL 的文件
-        """
         logger.info("♻️ 开始去重扫描...")
         self.service.process_duplicates(scan_mode='second')
 
     def scan_single(self, file_path, scan_mode='cover'):
-        """
-        [命令] 扫描单个文件
-        """
         path_obj = Path(file_path)
         if not path_obj.exists():
             logger.error(f"❌ 文件不存在: {file_path}")
             return
-
         logger.info(f"🔍 单文件扫描: {path_obj.name} (模式: {scan_mode})")
         self.service.scan_single_file(str(path_obj), scan_mode=scan_mode)
 
     def cleanup(self):
-        """
-        清理资源
-        """
         if self.db:
             self.db.close()

@@ -19,11 +19,8 @@ def initialize_components():
     # 1. 数据库
     db_manager = DatabaseManager(config.DB_PATH, table_name=config.TARGET_TABLE)
     
-    # 启动时自动备份数据库
-    try:
-        db_manager.create_backup()
-    except Exception as e:
-        logger.warning(f"⚠️ 自动备份失败: {e}")
+    # [优化] 移除启动自动备份，改为按需备份或定期备份，提高启动速度
+    # db_manager.create_backup()
 
     # 2. 网络搜索器
     try:
@@ -33,21 +30,20 @@ def initialize_components():
 
     searcher = EHentaiHashSearcher(cookies=MY_COOKIES)
     
-    # 验证网络
+    # 验证网络 (仅警告，不阻塞)
     if not searcher.verify_connection():
-        logger.warning("⚠️ 网络连接验证失败，可能会影响扫描")
+        logger.warning("⚠️ 网络连接验证失败，扫描可能会受阻")
 
-    # 3. 翻译器 [修复此处]
-    # 必须传入 config.TAG_DB_PATH
+    # 3. 翻译器 (懒加载，瞬间完成)
     translator = TagTranslator(config.TAG_DB_PATH)
     
-    # 4. 验证器
+    # 4. 验证器 (核心判定逻辑)
     validator = ScanValidator(searcher, translator)
 
     # 5. 任务管理器
     task_manager = TaskManager(db_manager)
 
-    # 6. 结果处理器
+    # 6. 结果处理器 (传入 validator 以统一判定标准)
     result_handler = ResultHandler(db_manager, validator)
 
     logger.debug("✅ 所有组件初始化完成")
@@ -55,9 +51,7 @@ def initialize_components():
     return db_manager, searcher, translator, task_manager, result_handler, validator
 
 def verify_environment():
-    """
-    环境自检
-    """
+    """环境目录自检"""
     if not config.DATA_DIR.exists():
         logger.info(f"创建数据目录: {config.DATA_DIR}")
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,4 +61,3 @@ def verify_environment():
         
     if not config.UNRAR_PATH.exists():
         logger.warning(f"⚠️ 未找到 UnRAR: {config.UNRAR_PATH}")
-        logger.warning("   -> RAR 文件可能无法处理")
