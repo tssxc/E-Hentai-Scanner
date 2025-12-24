@@ -1,126 +1,97 @@
 # app/controller.py
-"""
-应用控制器层：定义具体的任务逻辑
-"""
 import logging
 from pathlib import Path
-from typing import Union, Optional
 from . import config
+from .common import initialize_components, verify_environment
 from .services import ScanService
-from .logger import setup_logging
-from .common import verify_environment
 
-# 配置默认日志
-setup_logging(config.LOG_PATH_APP)
 logger = logging.getLogger(__name__)
 
-
 class AppController:
-    """
-    应用控制器：统一管理所有任务
-    """
     def __init__(self):
-        """初始化控制器和服务"""
-        self.service = ScanService()
+        """
+        初始化控制器
+        """
+        # 1. 初始化所有组件
+        # 解包顺序: db, searcher, translator, task_manager, result_handler, validator
+        (
+            self.db, 
+            self.searcher, 
+            self.translator, 
+            self.task_manager, 
+            self.result_handler,
+            self.validator
+        ) = initialize_components()
+
+        # 2. 初始化业务服务
+        self.service = ScanService(
+            self.db, 
+            self.searcher, 
+            self.task_manager, 
+            self.result_handler,
+            self.validator
+        )
 
     def scan_new_files(self):
-        """[任务] 扫描新文件"""
-        logger.info("🚀 [任务] 扫描新文件")
+        """
+        [命令] 扫描新文件
+        """
+        # 1. 执行环境自检 (无参数)
+        verify_environment()
+        
+        # 2. 获取目标目录并检查
         target_dir = config.DEFAULT_DIR
-        
-        # 环境检查
-        if not verify_environment(self.service.searcher, str(target_dir)):
-            logger.error("❌ 环境验证失败")
-            return
-        
-        # 获取待处理文件
-        files = self.service.get_pending_files(target_dir)
-        if not files:
-            logger.info("✅ 没有发现新文件")
+        if not target_dir.exists():
+            logger.error(f"❌ 目标目录不存在: {target_dir}")
+            logger.error("请在 app/config.py 中配置正确的 DIR_PROD 或 DIR_DEBUG")
             return
 
-        # 执行批量扫描
-        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
-        logger.info("🏁 [任务完成] 扫描新文件")
+        # 3. 检查网络连接 (可选，因为 initialize_components 已经警告过)
+        if not self.searcher.verify_connection():
+            logger.warning("⚠️ 网络连接不稳，可能会导致大量失败")
+
+        logger.info(f"📂 扫描目录: {target_dir}")
+        logger.info(f"🛠️ 扫描模式: {config.DEFAULT_MODE}")
+
+        # 4. 调用服务层执行任务
+        self.service.scan_new_files(str(target_dir))
 
     def retry_failures(self):
         """
-        [任务] 重试所有非成功项 (FAIL, NO_MATCH, MISMATCH等)
-        强制使用 'second' (第二页) 模式，并开启详细调试日志
+        [命令] 重试失败任务
         """
-        print("\n🚀 [任务] 启动全量重试 (模式: second) | 🐛 DEBUG模式已开启")
+        logger.info("🔄 准备重试失败任务...")
         
-        # ================= 动态调整配置 =================
-        # 1. 开启 DEBUG 级别日志
+        # 强制开启 Debug 模式以获得更多信息
+        import logging
         logging.getLogger().setLevel(logging.DEBUG)
-        for handler in logging.getLogger().handlers:
-            handler.setLevel(logging.DEBUG)
-            
-        # 2. 屏蔽第三方库噪音
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-        logging.getLogger("requests").setLevel(logging.WARNING)
-        logging.getLogger("charset_normalizer").setLevel(logging.WARNING)
-        logging.getLogger("PIL").setLevel(logging.WARNING)
         
-        # ================================================
-
-        # 获取需要重试的文件 (现在会返回所有非 SUCCESS 的文件)
-        retry_files = self.service.get_retry_files()
-        
-        if not retry_files:
-            logger.info("✅ 没有非 SUCCESS 的记录，无需重扫。")
-            return
-        
-        logger.info(f"📊 发现 {len(retry_files)} 个待重扫文件")
-        
-        # 转换为 Path 对象并过滤存在的文件
-        files = [Path(f) for f in retry_files if Path(f).exists()]
-        
-        if not files:
-            logger.warning("❌ 所有待重扫文件在本地都不存在")
-            return
-        
-        # [核心修改] 强制使用 scan_mode='second'
-        self.service.process_batch(files, scan_mode='second')
-        
-        logger.info("🏁 [任务完成] 全量重试结束")
+        # 调用服务层的重试逻辑
+        # 注意：重试通常强制使用 'second' 模式以提高准确率
+        self.service.retry_failures(scan_mode='second')
 
     def scan_dedup(self):
-        """[任务] 去重扫描（处理重复 URL）"""
-        logger.info("🚀 [任务] 去重扫描")
-        
-        dup_files = self.service.get_duplicate_files()
-        if not dup_files:
-            logger.info("✅ 没有发现重复文件")
-            return
-        
-        logger.info(f"📂 发现 {len(dup_files)} 个重复 URL 的文件")
-        files = [Path(f) for f in dup_files if Path(f).exists()]
-        
-        if not files:
-            logger.warning("⚠️ 所有重复文件都不存在")
-            return
-        
-        self.service.process_batch(files, scan_mode=config.DEFAULT_MODE)
-        logger.info("🏁 [任务完成] 去重扫描")
+        """
+        [命令] 扫描重复 URL 的文件
+        """
+        logger.info("♻️ 开始去重扫描...")
+        self.service.process_duplicates(scan_mode='second')
 
-    def scan_single(self, file_path: Union[str, Path], scan_mode: Optional[str] = None):
-        """[任务] 扫描单文件"""
-        file_path = Path(file_path)
-        if not file_path.exists():
+    def scan_single(self, file_path, scan_mode='cover'):
+        """
+        [命令] 扫描单个文件
+        """
+        path_obj = Path(file_path)
+        if not path_obj.exists():
             logger.error(f"❌ 文件不存在: {file_path}")
             return
-        
-        logger.info(f"🚀 [任务] 扫描单文件: {file_path.name}")
-        result = self.service.scan_single(file_path, scan_mode=scan_mode)
-        
-        if result['success']:
-            logger.info(f"✅ 扫描成功: {result.get('message')}")
-        else:
-            logger.warning(f"⚠️ 扫描失败: {result.get('message')}")
-        
-        return result
+
+        logger.info(f"🔍 单文件扫描: {path_obj.name} (模式: {scan_mode})")
+        self.service.scan_single_file(str(path_obj), scan_mode=scan_mode)
 
     def cleanup(self):
-        """清理资源"""
-        self.service.close()
+        """
+        清理资源
+        """
+        if self.db:
+            self.db.close()
