@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ================= 路径配置 =================
 
+# 注意：请确保这里的路径与您的实际漫画路径一致，或者修改为从 config 读取
 BASE_DEBUG_DIR = r"D:\漫画"
 DUPLICATES_ROOT = os.path.join(BASE_DEBUG_DIR, "duplicates")
 
@@ -223,7 +224,7 @@ def collect_title_groups(db):
 # ================= 阶段 2: 结果合并 (核心逻辑) =================
 
 def merge_and_execute(db):
-    print("\n🚀 [E-Hentai Scanner] 综合去重模式启动 (保留最佳副本)")
+    print("\n🚀 [E-Hentai Scanner] 综合去重模式启动 (全部转移模式)")
     ensure_duplicates_root()
 
     # --- 1. 获取两组数据 ---
@@ -300,20 +301,19 @@ def merge_and_execute(db):
                 size = os.path.getsize(row['file_path'])
             cluster_with_size.append((size, row))
         
-        # 按大小降序排序：最大的在第一个
+        # 按大小降序排序 (仅用于确定文件夹命名的基准，即最大的那个)
         cluster_with_size.sort(key=lambda x: x[0], reverse=True)
         
-        # 4.1 确定要保留的文件 (Keep the largest)
-        keep_size, keep_row = cluster_with_size[0]
+        # 4.1 获取信息用于命名 (依然使用最大的文件来决定文件夹名)
+        first_size, first_row = cluster_with_size[0]
         
-        # 4.2 确定要移动的文件 (Move the rest)
-        to_move_list = cluster_with_size[1:]
+        # 4.2 确定要移动的文件 (改为：全部移动)
+        to_move_list = cluster_with_size
         
-        raw_title = keep_row['title'] if keep_row['title'] else keep_row['file_name']
+        raw_title = first_row['title'] if first_row['title'] else first_row['file_name']
         folder_name = resolve_target_folder(raw_title)
         
-        print(f"[{idx}/{len(final_clusters)}] 📦 处理组 -> {folder_name}")
-        print(f"   ✨ 保留 (最大): {os.path.basename(keep_row['file_path'])} ({keep_size/1024/1024:.2f} MB)")
+        print(f"[{idx}/{len(final_clusters)}] 📦 处理组 -> {folder_name} (包含 {len(to_move_list)} 个文件)")
         
         # 4.3 执行移动
         for _, row in to_move_list:
@@ -321,7 +321,7 @@ def merge_and_execute(db):
                 total_moved += 1
 
     print("-" * 50)
-    print(f"🏁 全部完成! 共移动 {total_moved} 个重复文件 (原始文件已保留)。")
+    print(f"🏁 全部完成! 共移动 {total_moved} 个文件 (所有重复组均已移入 duplicates)。")
 
 # ================= 主程序 =================
 
