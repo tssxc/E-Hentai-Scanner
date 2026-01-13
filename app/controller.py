@@ -3,20 +3,38 @@ import logging
 import time
 import random
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from . import config
 from .database import DatabaseManager
 from .network import EHentaiHashSearcher
 from .services import ScannerService
 from .translator import TagTranslator
+from .deduplication import DeduplicationManager
 
 logger = logging.getLogger(__name__)
 
 class AppController:
-    def __init__(self):
-        self.db = DatabaseManager(config.DB_PATH)
+    def __init__(self, table_name: Optional[str] = None):
+        """
+        :param table_name: 指定数据库表名。
+                           如果不传，会优先尝试读取 config.TABLE_NAME (由 manage.py 设置)，
+                           最后默认为 "scan_results" (生产环境)。
+        """
+        # 1. 确定表名逻辑: 参数 > 全局配置 > 默认值
+        # 这样 manage.py 修改 config.TABLE_NAME 后，GUI 初始化 Controller 时就能自动获取
+        target_table = table_name or config.TARGET_TABLE
+        
+        logger.info(f"🔧 [Controller] 初始化 | 目标数据库表: {target_table}")
+
+        # 2. 初始化数据库
+        self.db = DatabaseManager(config.DB_PATH, table_name=target_table)
+        
         self.translator = TagTranslator(db_path=config.TAG_DB_PATH)
+        
+        # 3. 初始化去重管理器
+        self.deduplicator = DeduplicationManager(self.db)
+        
         self._is_running = False
         
         try:
@@ -27,7 +45,7 @@ class AppController:
             
         self.service = ScannerService(self.db, self.searcher, self.translator)
 
-    # ================= 1. 数据获取逻辑 =================
+    # ... (后续方法保持不变) ...
 
     def _get_files_to_scan(self, directory: Path) -> List[Path]:
         """获取未扫描的文件"""
@@ -37,16 +55,13 @@ class AppController:
         
         logger.info(f"📂 正在扫描目录: {directory} ...")
 
-        # 使用 set 避免重复添加
         all_files = set()
         extensions = ['*.zip', '*.rar', '*.7z', '*.cbz', '*.cbr']
         for ext in extensions:
             all_files.update(directory.rglob(ext))
         
-        # 获取已处理列表
         processed = self.db.get_all_processed_paths()
         
-        # 过滤
         pending = [f for f in all_files if str(f) not in processed]
         
         logger.info(f"📊 目录统计: 发现 {len(all_files)} 个 | 已入库 {len(processed)} | 🆕 待处理 {len(pending)}")
@@ -55,9 +70,8 @@ class AppController:
     def _get_files_to_retry(self) -> List[Path]:
         """从数据库获取失败项"""
         try:
-            logger.info("🔍 正在查询数据库中的失败记录...")
+            logger.info(f"🔍 正在查询表 [{self.db.table_name}] 中的失败记录...")
             cursor = self.db.conn.cursor() 
-            # 优化 SQL：只查询存在的文件，减少 Python 层的 IO 判断（虽然数据库层无法判断文件是否存在，但至少筛选状态）
             cursor.execute(f"SELECT file_path FROM {self.db.table_name} WHERE status != 'SUCCESS'")
             rows = cursor.fetchall()
             
@@ -73,32 +87,37 @@ class AppController:
             logger.error(f"❌ 获取重试列表失败: {e}")
             return []
 
-    # ================= 2. 扫描动作 =================
-
     def scan_new_files(self, gui_callback=None):
-        """Action: 扫描新文件 (Cover模式)"""
         files = self._get_files_to_scan(Path(config.DEFAULT_DIR))
         self._run_batch(files, "新文件扫描", gui_callback, mode='cover')
 
     def retry_failures(self, gui_callback=None):
-        """Action: 组合重试 (Second -> Title)"""
         files = self._get_files_to_retry()
         self._run_batch(files, "失败项智能重试", gui_callback, mode='second')
 
     def scan_failed_with_title(self, gui_callback=None):
-        """Action: 仅标题重扫"""
         files = self._get_files_to_retry()
         self._run_batch(files, "失败项标题重扫", gui_callback, mode='title')
         
     def run_deduplication(self, gui_callback=None):
         """Action: 运行去重分析"""
-        self._log_ui("🔍 开始分析重复文件...", gui_callback)
-        count = self.db.find_and_store_url_duplicates()
-        msg = f"去重分析完成! 发现 {count} 组重复项 (详情请查看数据库 url_duplicates 表)"
+        self._is_running = True
+        msg = f"🔍 开始多维查重分析 (表: {self.db.table_name} -> {self.db.relations_table})..."
+        logger.info(msg)
         self._log_ui(msg, gui_callback)
-        if gui_callback: gui_callback('done', msg)
-
-    # ================= 3. 核心逻辑 =================
+        
+        try:
+            count = self.deduplicator.run(progress_callback=gui_callback)
+            msg = f"✅ 查重完成! 发现 {count} 个重复文件 (详情请查看 {self.db.relations_table} 表)"
+            logger.info(msg)
+            self._log_ui(msg, gui_callback)
+            if gui_callback: gui_callback('done', msg)
+        except Exception as e:
+            err = f"❌ 查重出错: {e}"
+            logger.error(err)
+            if gui_callback: gui_callback('done', err)
+        finally:
+            self._is_running = False
 
     def stop_scanning(self):
         """外部调用此方法以终止扫描"""
@@ -112,7 +131,6 @@ class AppController:
         
         sleep_time = random.uniform(min_sleep, max_sleep)
         
-        # 将 sleep 分片，以便能快速响应停止信号
         step = 0.1 
         elapsed = 0
         while elapsed < sleep_time:
@@ -140,17 +158,14 @@ class AppController:
         is_stopped = False
 
         for i, file_path in enumerate(files, 1):
-            # 1. 检查停止信号
             if not self._is_running:
                 logger.warning("🛑 用户停止任务")
                 is_stopped = True
                 break
 
-            # 2. 两次请求间的休眠 (第一个文件不需要休眠)
             if i > 1:
                 self._wait_interval()
 
-            # 3. 执行处理
             logger.info(f"▶️ 处理 [{i}/{total}]: {file_path.name}")
             
             try:
@@ -158,7 +173,6 @@ class AppController:
                 if result.get('status') == 'SUCCESS':
                     success_count += 1
                 
-                # 更新 UI 进度
                 status_text = f"{result.get('status')} | {result.get('file_name')}"
                 if gui_callback:
                     gui_callback('progress', (i, total, status_text))
@@ -166,7 +180,6 @@ class AppController:
             except Exception as e:
                 logger.error(f"❌ 处理循环异常: {e}")
 
-        # 4. 任务结算
         final_msg = f"🏁 [{task_title}] 结束! 成功: {success_count}/{total}"
         if is_stopped:
             final_msg += " (用户终止)"
