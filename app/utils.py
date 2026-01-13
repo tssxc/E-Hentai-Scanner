@@ -3,44 +3,51 @@ import time
 import random
 import logging
 import re
+import difflib  # [新增] 必须引入标准库 difflib
 from rapidfuzz import fuzz
 from . import config
 
-# 强制获取 logger，防止未初始化
+# 强制获取 logger
 logger = logging.getLogger(__name__)
 
-def perform_random_sleep():
-    """执行随机休眠"""
-    sleep_time = random.uniform(config.SLEEP_MIN, config.SLEEP_MAX)
-    # logger.debug(f"⏳ [防封禁] 随机休眠 {sleep_time:.2f}s...")
-    time.sleep(sleep_time)
+def verify_environment():
+    """
+    环境目录自检 (从 common.py 迁移而来)
+    """
+    if not config.DATA_DIR.exists():
+        logger.info(f"创建数据目录: {config.DATA_DIR}")
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        
+    if not config.LOG_DIR.exists():
+        config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        
+    if not config.UNRAR_PATH.exists():
+        logger.warning(f"⚠️ 未找到 UnRAR 工具: {config.UNRAR_PATH}，RAR 文件将无法处理。")
+    else:
+        logger.debug(f"✅ UnRAR 路径确认: {config.UNRAR_PATH}")
 
-def calculate_similarity(text1: str, text2: str) -> float:
+
+def calculate_similarity(text1: str, text2: str) -> float:# TODO: 删除此函数
     """
-    计算两个字符串的相似度 (0.0 ~ 1.0)
+    [旧算法] 基于 RapidFuzz 的相似度 (0.0 ~ 1.0)
+    保留此函数以兼容旧代码，但建议使用下方的 calculate_hybrid_similarity
     """
-    # ⚠️ 1. 增加：空值检查的日志，防止静默失败
     if not text1 or not text2:
-        logger.debug(f"⚠️ [Sim-Skip] 跳过对比 (空值): Local='{text1}' vs Remote='{text2}'")
         return 0.0
 
     t1 = text1.lower().strip()
     t2 = text2.lower().strip()
 
-    # ⚠️ 2. 增加：包含匹配的日志
     if t1 in t2 or t2 in t1:
-        logger.debug(f"✅ [Sim-Direct] '{t1}' <-> '{t2}' => 1.0 (包含)")
         return 1.0
 
     score_sort = fuzz.token_sort_ratio(t1, t2)
     score_set = fuzz.token_set_ratio(t1, t2)
     final_score = max(score_sort, score_set) / 100.0
     
-    # ⚠️ 3. 正常计算的日志
-    logger.debug(f"🆚 [Sim-Calc] '{t1}' <-> '{t2}' => Sort:{score_sort} | Set:{score_set} | Final:{final_score:.2f}")
     return final_score
 
-def parse_gallery_title(full_title: str) -> dict:
+def parse_gallery_title(full_title: str) -> dict:#TODO: 遍历标题中所有的 [...] 块。
     """解析 E-Hentai/ExHentai 格式的标题"""
     info = {
         'event': None, 'group': None, 'artist': None,
@@ -102,3 +109,67 @@ def parse_gallery_title(full_title: str) -> dict:
 
     info['title'] = remaining
     return info
+
+# ========================================================
+# [新增] 混合相似度算法 (支持中日文分词 + 顺序检测)
+# 解决 ImportError: cannot import name 'calculate_hybrid_similarity'
+# ========================================================
+
+def cjk_tokenize(text: str) -> list:
+    """
+    [核心] 针对中日韩+英文混合环境的智能分词
+    策略：
+    1. 英文/数字：按单词匹配 (如 "Vol.1" -> "vol", "1")
+    2. CJK字符：按单字匹配 (如 "海贼王" -> "海", "贼", "王")
+    """
+    if not text: return []
+    text = text.lower()
+    
+    # 正则逻辑：
+    # 1. [a-z0-9]+ : 匹配连续的英文或数字 (英文单词)
+    # 2. [^\u0000-\u007F] : 匹配所有非ASCII字符 (中日文字符)
+    tokens = re.findall(r'[a-z0-9]+|[^\u0000-\u007F]', text)
+    
+    return tokens
+
+def calculate_cjk_ordered_score(filename: str, title: str) -> float:
+    """
+    支持 CJK 的有序序列相似度算法
+    """
+    if not filename or not title: return 0.0
+
+    # 1. 使用混合分词
+    tokens_file = cjk_tokenize(filename)
+    tokens_title = cjk_tokenize(title)
+    
+    if not tokens_file or not tokens_title: return 0.0
+
+    # 2. 序列比对 (要求顺序一致)
+    # autojunk=False 关闭自动过滤，对短语比对更准确
+    matcher = difflib.SequenceMatcher(None, tokens_file, tokens_title, autojunk=False)
+    
+    matches = matcher.get_matching_blocks()
+    match_count = sum(match.size for match in matches)
+    
+    # 3. 计算得分 (分母为文件名单词数)
+    return match_count / len(tokens_file)
+
+def calculate_hybrid_similarity(filename: str, title: str) -> float:
+    """
+    [综合入口] 结合 字符匹配 和 智能分词匹配
+    该函数被 app/validator.py 调用
+    """
+    if not filename or not title: return 0.0
+    
+    # A. 连续字符匹配 (适合极短文件名，或纯数字 "01.zip")
+    score_char = difflib.SequenceMatcher(None, filename.lower(), title.lower()).ratio()
+    
+    # B. CJK智能分词匹配 (适合语义包含 "海贼王" in "[汉化] 海贼王")
+    score_token = calculate_cjk_ordered_score(filename, title)
+    
+    # 长度保护：如果文件名太短(少于2个字/词)，强制使用字符匹配
+    # 防止单个字(如"王")匹配到任何包含该字的标题
+    if len(filename) < 2:
+        return score_char
+        
+    return max(score_char, score_token)

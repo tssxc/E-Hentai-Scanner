@@ -46,6 +46,8 @@ logs/*
 !logs/.gitkeep
 *.log
 
+test
+
 # 数据导出文件与临时文本
 *.txt
 #但在根目录下保留重要的文档:
@@ -70,4 +72,6 @@ logs/*
 Thumbs.db
 
 # 测试文件 (如需提交测试脚本，请注释掉下方行)
-# test_*.py
+test_*.py
+test.py
+todo.md

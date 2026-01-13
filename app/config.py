@@ -56,7 +56,7 @@ DEFAULT_MODE = "cover"  # cover (封面) 或 second (第二页)
 
 # ================= ⏱️ 访问频率控制 (秒) =================
 SLEEP_MIN = 4.0
-SLEEP_MAX = 6.0
+SLEEP_MAX = 5.0
 
 # ================= 🛠️ UnRAR 工具路径 =================
 UNRAR_PATH = TOOLS_DIR / "UnRAR.exe"
@@ -69,7 +69,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from secrets import MY_COOKIES
+    from local_secrets import MY_COOKIES
 except ImportError:
     MY_COOKIES = {
         'ipb_member_id': os.getenv('EH_IPB_MEMBER_ID', ''),
